@@ -1,2 +1,8 @@
 Enrique Perez's Skeinforge, stashed in git.
 http://fabmetheus.crsndoo.com/
+
+For simplicity each version of Skeinforge is kept in its own branch, e.g.
+sf-47, sf-50.
+
+Patches to use Skeinforge with ReplicatorG are also kept in separate branches,
+e.g. sf-47-RepG, sf-50-RepG.
