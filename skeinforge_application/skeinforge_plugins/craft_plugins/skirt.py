@@ -136,6 +136,7 @@ class SkirtRepository:
 		self.gapOverPerimeterWidth = settings.FloatSpin().getFromValue(
 			1.0, 'Gap over Perimeter Width (ratio):', self, 5.0, 3.0)
 		self.layersTo = settings.IntSpin().getSingleIncrementFromValue(0, 'Layers To (index):', self, 912345678, 1)
+		self.secondaryLoop = settings.BooleanSetting().getFromValue('Double Skirt', self, False)
 		self.executeTitle = 'Skirt'
 
 	def execute(self):
@@ -170,19 +171,31 @@ class SkirtSkein:
 		if flowRate != None:
 			self.distanceFeedRate.addLine('M108 S' + euclidean.getFourSignificantFigures(flowRate))
 
-	def addSkirt(self, z):
+	def addSkirt(self, z, primary):
 		'At skirt at z to gcode output.'
 		self.setSkirtFeedFlowTemperature()
-		self.distanceFeedRate.addLine('(<skirt>)')
 		oldTemperature = self.oldTemperatureInput
-		self.addTemperatureLineIfDifferent(self.skirtTemperature)
-		self.addFlowRate(self.skirtFlowRate)
-		for outsetLoop in self.outsetLoops:
-			closedLoop = outsetLoop + [outsetLoop[0]]
-			self.distanceFeedRate.addGcodeFromFeedRateThreadZ(self.feedRateMinute, closedLoop, self.travelFeedRateMinute, z)
-		self.addFlowRate(self.oldFlowRate)
-		self.addTemperatureLineIfDifferent(oldTemperature)
-		self.distanceFeedRate.addLine('(</skirt>)')
+		if primary:
+			self.distanceFeedRate.addLine('(<skirt>)')
+			self.addTemperatureLineIfDifferent(self.skirtTemperature)
+			self.addFlowRate(self.skirtFlowRate)
+			for outsetLoop in self.outsetLoops:
+				closedLoop = outsetLoop + [outsetLoop[0]]
+				self.distanceFeedRate.addGcodeFromFeedRateThreadZ(self.feedRateMinute, closedLoop, self.travelFeedRateMinute, z)
+			self.addFlowRate(self.oldFlowRate)
+			self.addTemperatureLineIfDifferent(oldTemperature)
+			self.distanceFeedRate.addLine('(</skirt>)')
+
+		else:
+			self.distanceFeedRate.addLine('(<secondarySkirt>)')
+			self.addTemperatureLineIfDifferent(self.skirtTemperature)
+			self.addFlowRate(self.skirtFlowRate)
+			for outsetLoop in self.outsetSecondaryLoops:
+				closedLoop = outsetLoop + [outsetLoop[0]]
+				self.distanceFeedRate.addGcodeFromFeedRateThreadZ(self.feedRateMinute, closedLoop, self.travelFeedRateMinute, z)
+			self.addFlowRate(self.oldFlowRate)
+			self.addTemperatureLineIfDifferent(oldTemperature)
+			self.distanceFeedRate.addLine('(</secondarySkirt>)')
 
 	def addTemperatureLineIfDifferent(self, temperature):
 		'Add a line of temperature if different.'
@@ -203,10 +216,19 @@ class SkirtSkein:
 		points += euclidean.getPointsByVerticalDictionary(self.perimeterWidth, self.unifiedLoop.verticalDictionary)
 		loops = triangle_mesh.getDescendingAreaOrientedLoops(points, points, 2.5 * self.perimeterWidth)
 		outerLoops = getOuterLoops(loops)
-		outsetLoops = intercircle.getInsetSeparateLoopsFromLoops(outerLoops, -self.skirtOutset)
+		if self.repository.secondaryLoop.value:
+			outsetLoops = intercircle.getInsetSeparateLoopsFromLoops(outerLoops, -(self.skirtOutset+self.perimeterWidth))
+		else:
+			outsetLoops = intercircle.getInsetSeparateLoopsFromLoops(outerLoops, -self.skirtOutset)
+			
 		self.outsetLoops = getOuterLoops(outsetLoops)
 		if self.repository.convex.value:
 			self.outsetLoops = [euclidean.getLoopConvex(euclidean.getConcatenatedList(self.outsetLoops))]
+		if self.repository.secondaryLoop.value:
+			outsetSecondaryLoops = intercircle.getInsetSeparateLoopsFromLoops(outerLoops, -self.skirtOutset)
+			self.outsetSecondaryLoops = getOuterLoops(outsetSecondaryLoops)
+			if self.repository.convex.value:
+				self.outsetSecondaryLoops = [euclidean.getLoopConvex(euclidean.getConcatenatedList(self.outsetSecondaryLoops))]
 
 	def getCraftedGcode(self, gcodeText, repository):
 		'Parse gcode text and store the skirt gcode.'
@@ -233,6 +255,17 @@ class SkirtSkein:
 			return
 		loopCrossDictionary = None
 		layerIndex = -1
+		self.layersTo = self.repository.layersTo.value
+		if self.repository.secondaryLoop.value:
+			for line in self.lines[self.lineIndex :]:
+				splitLine = gcodec.getSplitLineBeforeBracketSemicolon(line)
+				firstWord = gcodec.getFirstWord(splitLine)
+				if firstWord == '(<layer>':
+					layerIndex += 1
+				elif firstWord == '(<supportLayer>)':
+					if layerIndex > self.repository.layersTo.value:
+						self.layersTo = layerIndex
+		layerIndex = -1
 		for line in self.lines[self.lineIndex :]:
 			splitLine = gcodec.getSplitLineBeforeBracketSemicolon(line)
 			firstWord = gcodec.getFirstWord(splitLine)
@@ -247,7 +280,7 @@ class SkirtSkein:
 				loopCrossDictionary.loop.append(location.dropAxis())
 			elif firstWord == '(<layer>':
 				layerIndex += 1
-				if layerIndex > self.repository.layersTo.value:
+				if layerIndex > self.layersTo:
 					return
 				settings.printProgress(layerIndex, 'skirt')
 
@@ -290,8 +323,9 @@ class SkirtSkein:
 			self.feedRateMinute = gcodec.getFeedRateMinute(self.feedRateMinute, splitLine)
 		elif firstWord == '(<layer>':
 			self.layerIndex += 1
-			if self.layerIndex < self.repository.layersTo.value:
-				self.addSkirt(float(splitLine[1]))
+			self.layerZ = splitLine[1]
+			if self.layerIndex < self.layersTo:
+				self.addSkirt(float(self.layerZ), True)
 		elif firstWord == 'M101':
 			self.isExtruderActive = True
 		elif firstWord == 'M103':
@@ -306,6 +340,9 @@ class SkirtSkein:
 			self.isSupportLayer = True
 		elif firstWord == '(</supportLayer>)':
 			self.isSupportLayer = False
+			if self.repository.secondaryLoop.value:
+				if self.layerIndex < self.layersTo:
+					self.addSkirt(float(self.layerZ), False)
 
 	def setSkirtFeedFlowTemperature(self):
 		'Set the skirt feed rate, flow rate and temperature to that of the next extrusion.'

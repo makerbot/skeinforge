@@ -164,6 +164,15 @@ class DimensionRepository:
 		self.retractWithinIsland = settings.BooleanSetting().getFromValue('Retract Within Island', self, False)
 		self.retractionDistance = settings.FloatSpin().getFromValue( 0.0, 'Retraction Distance (millimeters):', self, 100.0, 0.0 )
 		self.restartExtraDistance = settings.FloatSpin().getFromValue( 0.0, 'Restart Extra Distance (millimeters):', self, 100.0, 0.0 )
+		settings.LabelSeparator().getFromRepository(self)
+		settings.LabelDisplay().getFromName('- Support Extruder -', self )
+		self.primaryToolNumber = settings.IntSpin().getSingleIncrementFromValue( 0, 'Primary Tool (int):', self, 3, 0 )
+		self.supportToolNumber = settings.IntSpin().getSingleIncrementFromValue( 0, 'Support Tool (int):', self, 3, 0 )
+		self.nameOfPrimaryToolFile = settings.StringSetting().getFromValue(
+			'Name of Primary Tool Switch File:', self, 'primary_tool.gcode')
+		self.nameOfSupportToolFile = settings.StringSetting().getFromValue('Name of Support Tool Switch File:', self, 'support_tool.gcode')
+		self.supportFilamentDiameter = settings.FloatSpin().getFromValue(1.0, 'Support Filament Diameter (mm):', self, 6.0, 1.8)
+		self.supportFilamentPackingDensity = settings.FloatSpin().getFromValue(0.7, 'Support Filament Packing Density (ratio):', self, 1.0, 1.00)
 		self.executeTitle = 'Dimension'
 
 	def execute(self):
@@ -191,6 +200,10 @@ class DimensionSkein:
 		self.totalExtrusionDistance = 0.0
 		self.travelFeedRatePerSecond = None
 		self.zDistanceRatio = 5.0
+		self.inSupport = False
+		self.waitingForSupportAlterationEnd = False
+		self.raftLayers = 0
+		self.skipSupportLayerStart = False
 
 	def addLinearMoveExtrusionDistanceLine(self, extrusionDistance):
 		'Get the extrusion distance string from the extrusion distance.'
@@ -204,6 +217,8 @@ class DimensionSkein:
 		self.repository = repository
 		filamentRadius = 0.5 * repository.filamentDiameter.value
 		filamentPackingArea = math.pi * filamentRadius * filamentRadius * repository.filamentPackingDensity.value
+		supportFilamentRadius = 0.5 * repository.supportFilamentDiameter.value
+		supportFilamentPackingArea = math.pi * supportFilamentRadius * supportFilamentRadius * repository.supportFilamentPackingDensity.value
 		self.minimumTravelForRetraction = self.repository.minimumTravelForRetraction.value
 		self.doubleMinimumTravelForRetraction = self.minimumTravelForRetraction + self.minimumTravelForRetraction
  		self.lines = archive.getTextLines(gcodeText)
@@ -211,6 +226,7 @@ class DimensionSkein:
 		if not self.repository.retractWithinIsland.value:
 			self.parseBoundaries()
 		self.flowScaleSixty = 60.0 * self.layerThickness * self.perimeterWidth / filamentPackingArea
+		self.supportFlowScaleSixty = 60.0 * self.layerThickness * self.perimeterWidth / supportFilamentPackingArea
 		if self.operatingFlowRate == None:
 			print('There is no operatingFlowRate so dimension will do nothing.')
 			return gcodeText
@@ -218,6 +234,14 @@ class DimensionSkein:
 		self.extruderRetractionSpeedMinuteString = self.distanceFeedRate.getRounded(60.0 * self.repository.extruderRetractionSpeed.value)
 		if self.maximumZFeedRatePerSecond != None and self.travelFeedRatePerSecond != None:
 			self.zDistanceRatio = self.travelFeedRatePerSecond / self.maximumZFeedRatePerSecond
+		self.supportToolLines = settings.getAlterationFileLines(repository.nameOfSupportToolFile.value)
+		self.primaryToolLines = settings.getAlterationFileLines(repository.nameOfPrimaryToolFile.value)
+		baseLayersString = self.getSettingString('raft', 'Base Layers')
+		if baseLayersString != None and int(baseLayersString) > 0:
+			self.raftLayers = int(baseLayersString)
+		interfaceLayersString = self.getSettingString('raft', 'Interface Layers')
+		if interfaceLayersString != None and int(interfaceLayersString) > 0:
+			self.raftLayers = max(int(interfaceLayersString), self.raftLayers)
 		for lineIndex in xrange(self.lineIndex, len(self.lines)):
 			self.parseLine( lineIndex )
 		return self.distanceFeedRate.output.getvalue()
@@ -275,6 +299,33 @@ class DimensionSkein:
 				isActive = False
 		return None
 
+		def getDistanceToNextThread(self, lineIndex):
+			'Get the travel distance to the next thread.'
+			if self.oldLocation == None:
+				return None
+			isActive = False
+			location = self.oldLocation
+			for afterIndex in xrange(lineIndex + 1, len(self.lines)):
+				line = self.lines[afterIndex]
+				splitLine = gcodec.getSplitLineBeforeBracketSemicolon(line)
+				firstWord = gcodec.getFirstWord(splitLine)
+				if firstWord == 'G1':
+					if isActive:
+						if not self.repository.retractWithinIsland.value:
+							locationEnclosureIndex = self.getSmallestEnclosureIndex(location.dropAxis())
+							if locationEnclosureIndex != self.getSmallestEnclosureIndex(self.oldLocation.dropAxis()):
+								return None
+						locationMinusOld = location - self.oldLocation
+						xyTravel = abs(locationMinusOld.dropAxis())
+						zTravelMultiplied = locationMinusOld.z * self.zDistanceRatio
+						return math.sqrt(xyTravel * xyTravel + zTravelMultiplied * zTravelMultiplied)
+					location = gcodec.getLocationFromSplitLine(location, splitLine)
+				elif firstWord == 'M101':
+					isActive = True
+				elif firstWord == 'M103':
+					isActive = False
+			return None
+
 	def getExtrusionDistanceString( self, distance, splitLine ):
 		'Get the extrusion distance string.'
 		self.feedRateMinute = gcodec.getFeedRateMinute( self.feedRateMinute, splitLine )
@@ -287,7 +338,10 @@ class DimensionSkein:
 			print(distance)
 			print(splitLine)
 			return ''
-		scaledFlowRate = self.flowRate * self.flowScaleSixty
+		if not self.inSupport:
+			scaledFlowRate = self.flowRate * self.flowScaleSixty
+		else:
+			scaledFlowRate = self.flowRate * self.supportFlowScaleSixty
 		return self.getExtrusionDistanceStringFromExtrusionDistance(scaledFlowRate / self.feedRateMinute * distance)
 
 	def getExtrusionDistanceStringFromExtrusionDistance(self, extrusionDistance):
@@ -296,6 +350,25 @@ class DimensionSkein:
 			return ' E' + self.distanceFeedRate.getRounded(extrusionDistance)
 		self.totalExtrusionDistance += extrusionDistance
 		return ' E' + self.distanceFeedRate.getRounded(self.totalExtrusionDistance)
+		
+	def getSwitchToTool(self, primary):
+		if self.repository.primaryToolNumber.value != self.repository.supportToolNumber.value:
+			if primary:
+				self.inSupport = False
+				self.distanceFeedRate.addLine('(switching to primary tool T%s)' % self.repository.primaryToolNumber.value)
+				self.distanceFeedRate.addLinesSetAbsoluteDistanceMode(self.primaryToolLines)
+				self.distanceFeedRate.addLine('M108 T%s' % self.repository.primaryToolNumber.value)
+			else:
+				self.inSupport = True
+				self.distanceFeedRate.addLine('(switching to support tool T%s)' % self.repository.supportToolNumber.value)
+				self.distanceFeedRate.addLinesSetAbsoluteDistanceMode(self.supportToolLines)
+				self.distanceFeedRate.addLine('M108 T%s' % self.repository.supportToolNumber.value)
+				
+			if not self.repository.relativeExtrusionDistance.value:
+				self.distanceFeedRate.addLine('G92 A0 B0')
+				self.totalExtrusionDistance = 0.0
+			return
+		
 
 	def getRetractionRatio(self, lineIndex):
 		'Get the retraction ratio.'
@@ -314,6 +387,22 @@ class DimensionSkein:
 		for loopIndex, loop in enumerate(boundaryLayer.loops):
 			if euclidean.isPointInsideLoop(loop, point):
 				return loopIndex
+		return None
+		
+	def getSettingString(self, procedureName, settingNameStart):
+		'Get the setting value from the lines, return None if there is no setting starting with that name.'
+		settingNameStart = settingNameStart.replace(' ', '_')
+		for line in self.lines:
+			splitLine = gcodec.getSplitLineBeforeBracketSemicolon(line)
+			firstWord = None
+			if len(splitLine) > 0:
+				firstWord = splitLine[0]
+			if firstWord == '(<setting>':
+				if len(splitLine) > 4:
+					if splitLine[1] == procedureName and splitLine[2].startswith(settingNameStart):
+						return splitLine[3]
+			elif firstWord == '(</settings>)':
+				return None
 		return None
 
 	def parseBoundaries(self):
@@ -382,6 +471,37 @@ class DimensionSkein:
 		elif firstWord == '(<layer>':
 			self.layerIndex += 1
 			settings.printProgress(self.layerIndex, 'dimension')
+		elif firstWord == '(<supportLayer>)' or firstWord == '(<skirt>)':
+			self.distanceFeedRate.addLine(line)
+			if self.layerIndex < self.raftLayers or self.skipSupportLayerStart:
+				self.skipSupportLayerStart = False
+				return
+			if (lineIndex+1 < len(self.lines)):
+				nextline = self.lines[lineIndex+1].lstrip()
+				nextSplitLine = gcodec.getSplitLineBeforeBracketSemicolon(nextline)
+				if nextSplitLine[0] == '(<alteration>)':
+					self.waitingForSupportAlterationEnd = True
+					return
+			self.getSwitchToTool(False)
+			return
+		elif firstWord == '(</alteration>)' and self.waitingForSupportAlterationEnd == True:
+			self.waitingForSupportAlterationEnd = False
+			self.distanceFeedRate.addLine(line)
+			self.getSwitchToTool(False)
+			return
+		elif firstWord == '(</supportLayer>)' or firstWord == '(</skirt>)' or firstWord == '(<raftLayerEnd>':
+			if self.layerIndex < self.raftLayers:
+				self.distanceFeedRate.addLine(line)
+				return
+			# avoid swtich to primary then immediately switch back
+			if firstWord == '(</skirt>)' and lineIndex+1 < len(self.lines):
+				nextline = self.lines[lineIndex+1].lstrip()
+				nextSplitLine = gcodec.getSplitLineBeforeBracketSemicolon(nextline)
+				if nextSplitLine[0] == '(<supportLayer>)':
+					self.skipSupportLayerStart = True
+					self.distanceFeedRate.addLine(line)
+					return
+			self.getSwitchToTool(True)
 		elif firstWord == 'M101':
 			self.addLinearMoveExtrusionDistanceLine(self.restartDistance * self.retractionRatio)
 			if self.totalExtrusionDistance > self.repository.maximumEValueBeforeReset.value: 
@@ -393,7 +513,7 @@ class DimensionSkein:
 			self.retractionRatio = self.getRetractionRatio(lineIndex)
 			self.addLinearMoveExtrusionDistanceLine(-self.repository.retractionDistance.value * self.retractionRatio)
 			self.isExtruderActive = False
-		elif firstWord == 'M108':
+		elif firstWord == 'M108': # and splitLine[1][0] == 'S'
 			self.flowRate = float( splitLine[1][1 :] )
 		self.distanceFeedRate.addLine(line)
 
