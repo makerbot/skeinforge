@@ -1,0 +1,3 @@
+resources/things-skel/ usr/share/makerware/
+resources/app_icons/hicolor/* /usr/share/icons/hicolor
+debian/makerware.desktop /usr/share/applications

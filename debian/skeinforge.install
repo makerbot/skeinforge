@@ -1,0 +1,4 @@
+fabmetheus_utilities			usr/share/skeinforge
+skeinforge_application			usr/share/skeinforge
+__init__.py 					usr/share/skeinforge
+wrapper/skeinforge 				usr/bin
