@@ -8,7 +8,8 @@ Homepage: https://github.com/makerbot/skeinforge
 
 Package: skeinforge
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, python, python-tk, pypy
+Depends: ${shlibs:Depends}, ${misc:Depends}, python, python-tk
+Suggests: pypy
 Description: Toolpath generator written by Enrique Perez and others.
  Skeinforge is a program for slicing an STL file and determining a toolpath
  for additive manufacturing of the object. Skeinforge was written by Enrique
