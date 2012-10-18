@@ -1,0 +1,6 @@
+#! /bin/sh
+# postinst for skeinforge
+
+python -c 'import compileall; compileall.compile_dir("/usr/share/skeinforge",force=1)'
+
+exit 0
