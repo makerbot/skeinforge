@@ -3,4 +3,8 @@
 
 python -c 'import compileall; compileall.compile_dir("/usr/share/skeinforge",force=1)'
 
+#skeinforge requires this empty directory here, which git strips because it only
+#tracks files, not directories
+mkdir /usr/share/skeinforge/skeinforge_application/profiles/winding
+
 exit 0
