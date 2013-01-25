@@ -4,4 +4,4 @@
 AddOption('--debug_build', action='store_true', dest='debug_build')
 debug = GetOption('debug_build')
 
-SConscript('SConscript', variant_dir='obj/', duplicate=1)
+SConscript('SConscript')
