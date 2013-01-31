@@ -1,0 +1,14 @@
+Source: mb-skeinforge
+Section: unknown
+Priority: extra
+Maintainer: MakerBot Industries dev team <dev@makerbot.com>
+Build-Depends: cdbs, debhelper (>= 8.0.0), python
+Standards-Version: 3.9.2
+Homepage: https://github.com/makerbot/
+#Vcs-Git: git://git.debian.org/collab-maint/s3g.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/s3g.git;a=summary
+
+Package: mb-skeinforge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, python
+Description: Skeinforge modification for MakerBot printers.
