@@ -9,8 +9,4 @@ env.MBInstallResources('documentation', 'skeinforge')
 env.MBInstallResources('fabmetheus_utilities', 'skeinforge')
 env.MBInstallResources('skeinforge_application', 'skeinforge')
 
-# seriously, skeinforge?
-env.Command('winding', [], [Mkdir('winding')])
-env.MBInstallResources('winding', os.path.join('skeinforge', 'skeinforge_application', 'profiles'))
-
 env.MBCreateInstallTarget()
