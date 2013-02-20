@@ -2,8 +2,6 @@
 
 import os
 
-print "skeinforge doesn't need to be built"
-
 env = Environment(ENV = os.environ)
 
 env.Tool('mb_install', toolpath=[Dir('submodule/mw-scons-tools')])
