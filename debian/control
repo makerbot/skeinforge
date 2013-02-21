@@ -1,5 +1,5 @@
 Source: mb-skeinforge
-Section: unknown
+Section: main
 Priority: extra
 Maintainer: MakerBot Industries dev team <dev@makerbot.com>
 Build-Depends: cdbs, debhelper (>= 8.0.0), python2.7
