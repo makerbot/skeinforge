@@ -1,3 +1,3 @@
-# vim:ai:et:ff=unix:fileencoding=utf-8:sw=4:syntax=python:ts=4:
 
+# we don't need no stinkin' variant dir
 SConscript('SConscript')
