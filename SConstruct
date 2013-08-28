@@ -1,3 +1,4 @@
 
-# we don't need no stinkin' variant dir
-SConscript('SConscript')
+env = Environment(tools = ['mb_sconstruct'])
+
+env.MBSConscript('SConscript', python_project = True)
